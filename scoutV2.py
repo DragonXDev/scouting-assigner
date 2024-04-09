@@ -1,7 +1,6 @@
 import requests
 import csv
 
-
 event_key = '2024cabe'
 api_key = 'U3magfm5xr9Sc7mzWuxKfDJYYD1jMtUqWiVuNbMmxdDURf7M2vHbSpxkuMjYnn4H'
 url = f'https://www.thebluealliance.com/api/v3/event/{event_key}/matches'
@@ -17,6 +16,8 @@ def sort_key(match):
     comp_level_order = {'qm': 1, 'ef': 2, 'qf': 3, 'sf': 4, 'f': 5}
     return (comp_level_order.get(match['comp_level'], 6), match['match_number'])
 
+# Filter for qualification matches only
+matches = [match for match in matches if match['comp_level'] == 'qm']
 sorted_matches = sorted(matches, key=sort_key)
 
 formatted_matches = []
@@ -24,15 +25,14 @@ for match in sorted_matches:
     red_teams = match['alliances']['red']['team_keys']
     blue_teams = match['alliances']['blue']['team_keys']
     formatted_match = (tuple(red_teams), tuple(blue_teams))
-    print(formatted_match, "\n")
     formatted_matches.append(formatted_match)
 
 print("LEN: ", len(formatted_matches))
 
-people = ["Alice", "Bob", "Charlie", "David", "Emily", "Frank", "Grace", "Henry", "Isabella", "Jack", "Katie", "Liam", "Mia", "Noah", "Olivia", "Ethan", "Ava", "Sophia", "Mason", "Harper"]
+people = ["Alice", "Bob", "Charlie", "David", "Emily", "Frank", "Grace", "Henry", "Isabella", "Jack", "Katie", "Liam", "Mia", "Noah", "Olivia", "Ethan", "Ava", "Sophia"]
 
 def assign_scouting(formatted_matches, people):
-  """Assigns people to scout teams in matches, optimizing for spaced-out assignments + chunking."""
+  """Assigns people to scout teams in matches, optimizing for spaced-out assignments."""
 
   num_people = len(people)
   teams_per_person = len(set(team for match in formatted_matches for alliance in match for team in alliance)) // num_people
@@ -45,7 +45,6 @@ def assign_scouting(formatted_matches, people):
     """Checks if assigning a team to a person for a specific match is valid."""
     if team in assignments[person]:
       return False
-
     for future_match_index in range(match_index, len(formatted_matches)):
       future_match = formatted_matches[future_match_index]
       for existing_team in assignments[person]:
@@ -53,6 +52,7 @@ def assign_scouting(formatted_matches, people):
           return False 
     return True
 
+  # Initial optimal assignment attempt
   for match_index, match in enumerate(formatted_matches):
     assigned_people_in_match = set() 
     for alliance in match:
@@ -66,6 +66,7 @@ def assign_scouting(formatted_matches, people):
               team_assignments[team] = person 
               break 
 
+  # Fallback assignment with conflict resolution and duplicate removal
   unassigned_teams = [team for team in set(team for match in formatted_matches for alliance in match for team in alliance) if team not in team_assignments]
   for team in unassigned_teams:
     conflicting_people = set()
@@ -84,6 +85,7 @@ def assign_scouting(formatted_matches, people):
         break
 
     if best_person is None:
+      # Find person with fewest conflicts and least assignments 
       min_conflicts = float('inf')
       for person, assigned_teams in assignments.items():
         conflicts = 0
@@ -101,13 +103,12 @@ def assign_scouting(formatted_matches, people):
       slots_remaining[best_person] -= 1
       team_assignments[team] = best_person
 
-      # Resolve conflicts by reassigning a conflicting team
+      # Resolve conflicts and duplicates by reassigning 
       if best_person in conflicting_people:
-        for conflicting_team in assignments[best_person]:
+        for conflicting_team in list(assignments[best_person]):  # Iterate over a copy 
           if any(conflicting_team in alliance and team in alliance for match in formatted_matches for alliance in match):
-            # Find a suitable person to reassign the conflicting team to
             for other_person in people:
-              if other_person != best_person and slots_remaining[other_person] > 0 and is_valid_assignment(other_person, conflicting_team, 0, formatted_matches): 
+              if other_person != best_person and slots_remaining[other_person] > 0 and is_valid_assignment(other_person, conflicting_team, 0, formatted_matches):
                 assignments[other_person].append(conflicting_team)
                 assignments[best_person].remove(conflicting_team)
                 slots_remaining[other_person] -= 1
@@ -126,14 +127,11 @@ def get_match_details(match_key, matches_data):
       return match['comp_level'], match['match_number']
   return None, None  
 
-
 def export_to_csv(scouting_assignments, matches, filename="scouting_assignments.csv"):
   """Exports scouting assignments and match details to a CSV file."""
-
   with open(filename, 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(["Person", "Teams", "Matches"])
-
     for person, teams in scouting_assignments.items():
       match_details = []
       for team in teams:
@@ -142,22 +140,24 @@ def export_to_csv(scouting_assignments, matches, filename="scouting_assignments.
             comp_level, match_number = get_match_details(match['key'], matches)
             match_type = {
                 'qm': 'Qualification Match',
-                'ef': 'Octo-Final Match',
-                'qf': 'Quarterfinal Match',
-                'sf': 'Semifinal Match',
-                'f': 'Final Match'
-            }.get(comp_level, 'Unknown Match Type')
+            }.get(comp_level, 'Unknown Match Type')  # Only QM for now
             match_details.append(f"{match_type} {match_number}")
       writer.writerow([person, ', '.join(teams), ', '.join(sorted(match_details))])
 
+
 for person, teams in scouting_assignments.items():
-  print(f"{person}: {teams}")
+  print(f"{person}: {sorted(teams)}")
   match_details = []
   for team in teams:
     for match_index, match in enumerate(matches): 
       if team in match['alliances']['red']['team_keys'] or team in match['alliances']['blue']['team_keys']:
         comp_level, match_number = get_match_details(match['key'], matches)
         match_details.append(f"{comp_level}{match_number}")
+  duplicates = len(match_details) != len(set(match_details))
+  print("DUPLICATES: ", duplicates) 
   print(f"  Matches: {sorted(match_details)}\n")
 
 export_to_csv(scouting_assignments, matches)
+
+if any(len(details) != len(set(details)) for details in [details for _, details in scouting_assignments.items()]):
+  print('-'*20,"DUPLICATES FOUND",'-'*20) 
